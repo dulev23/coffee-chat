@@ -179,13 +179,34 @@ Frontend: `cd frontend && npm run build` type-checks and builds.
 
 ## Deployment
 
-The frontend is static and suits Vercel. The backend is a long-running Spring Boot server, which Vercel can't host, so it targets a Docker-capable host (Render, via `render.yaml`) with a managed Postgres (for example Neon).
+| Part     | Host                          | Config                         |
+| -------- | ----------------------------- | ------------------------------ |
+| Frontend | Vercel (static site)          | root directory `frontend`      |
+| Backend  | Render (Docker web service)   | `render.yaml`, `backend/Dockerfile` |
+| Database | Neon (serverless PostgreSQL)  | connection string in Render env |
 
-1. **Postgres:** create a database and note the host, user and password.
-2. **Backend (Render):** create a Blueprint from this repo, then set `SPRING_DATASOURCE_URL=jdbc:postgresql://<host>/<db>?sslmode=require`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`, `CORS_ORIGINS=https://<your-app>.vercel.app` and optionally `GEMINI_API_KEY`. The health check is `/actuator/health`.
-3. **Frontend (Vercel):** import the repo with root directory `frontend` and set `VITE_API_URL=https://<your-api>.onrender.com`.
+Vercel can't host a long-running Spring Boot server, so the backend runs as a Docker container on Render.
 
-Render's free instance sleeps when idle, so the first request can take up to a minute; the booking page says so while it waits.
+1. **Push to GitHub**: create an empty repository, then `git remote add origin https://github.com/<you>/coffee-chat.git` and `git push -u origin main`.
+2. **Neon**: create a project and database. Copy the **direct** (non-pooled) connection host, because Flyway uses session-level locks that a transaction pooler doesn't support.
+3. **Render**: New → Blueprint → select the repo. `render.yaml` creates `coffee-chat-api` (free plan, health check `/actuator/health`). Set:
+   - `SPRING_DATASOURCE_URL=jdbc:postgresql://<neon-host>/<db>?sslmode=require`
+   - `SPRING_DATASOURCE_USERNAME=<neon-user>`
+   - `SPRING_DATASOURCE_PASSWORD=<neon-password>`
+   - `CORS_ORIGINS=https://<your-app>.vercel.app`
+   - `GEMINI_API_KEY=<optional>`
+
+   On first start Flyway creates the tables. Check `https://<your-api>.onrender.com/actuator/health` returns `{"status":"UP"}`.
+4. **Vercel**: Add New → Project → import the repo, set **Root Directory** to `frontend` (Vite is detected), and add `VITE_API_URL=https://<your-api>.onrender.com`. Deploy.
+5. **CORS**: put the final Vercel URL in Render's `CORS_ORIGINS` (comma-separate several). Render redeploys when an env var changes.
+
+`VITE_API_URL` is baked in at build time, so changing it needs a Vercel redeploy. Production builds ship no source maps.
+
+### Redeploying
+
+Both Render and Vercel watch the GitHub repo: every push to `main` rebuilds and redeploys the backend (Render) and the frontend (Vercel) automatically. Pushes to other branches get Vercel preview URLs; add those to `CORS_ORIGINS` if previews should call the API. Flyway applies any new `V2__…` migration on the next backend start; never edit a migration that has already run.
+
+Render's free instance sleeps after about 15 minutes idle, so the first request can take up to a minute; the booking page says so while it waits. Neon keeps the data, so bookings survive restarts and redeploys.
 
 ## Known limitations and improvements
 
