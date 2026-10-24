@@ -2,7 +2,7 @@
 
 A small scheduling app for coffee chats, built for the TeamLift Internship Challenge. The host publishes open time slots, visitors book one with their name and email, and the app makes sure no slot can be booked twice. After booking, the visitor gets a short confirmation message, optionally written by Gemini.
 
-**Live:** _add Vercel link_
+**Live:** https://coffee-chat-ruddy-rho.vercel.app/#
 
 ## Features
 
