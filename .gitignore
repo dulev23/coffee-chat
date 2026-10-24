@@ -12,3 +12,5 @@ application-local.properties
 .idea/
 *.iml
 .vscode/
+
+.vercel

@@ -2,7 +2,7 @@
 
 A small scheduling app for coffee chats, built for the TeamLift Internship Challenge. The host publishes open time slots, visitors book one with their name and email, and the app makes sure no slot can be booked twice. After booking, the visitor gets a short confirmation message, optionally written by Gemini.
 
-**Live:** _add Vercel link_ · **API:** _add Render link_
+**Live:** _add Vercel link_
 
 ## Features
 
@@ -20,7 +20,7 @@ A small scheduling app for coffee chats, built for the TeamLift Internship Chall
 | Backend  | Java 21, Spring Boot 3.5 (Web, Data JPA, Validation, Actuator), Flyway  |
 | Database | PostgreSQL 16                                                           |
 | AI       | Gemini API (`gemini-3.5-flash-lite`), optional                          |
-| Infra    | Docker, Docker Compose, Nginx                                           |
+| Infra    | Docker, Docker Compose, Nginx (local); Vercel + Neon (production)       |
 
 ## Architecture
 
@@ -154,7 +154,7 @@ PostgreSQL with a schema managed by Flyway (`backend/src/main/resources/db/migra
 
 After a booking commits, `ConfirmationService` calls the Gemini Interactions API (`POST https://generativelanguage.googleapis.com/v1beta/interactions`, model `gemini-3.5-flash-lite`, `store: false` so Google doesn't keep the interaction) and asks for a 2 to 3 sentence confirmation that mentions the guest's first name, the time and the topic. The text comes back in the booking response's `message` field and is shown on the confirmation ticket.
 
-- **Setup:** create a free key at [Google AI Studio](https://aistudio.google.com/apikey) and set `GEMINI_API_KEY` in `.env` locally, or as a secret environment variable on the backend host (Render). Never put it in the frontend or a `VITE_` variable: Vite embeds those in the public JavaScript bundle. Don't enable billing; without it the key stays on the free tier.
+- **Setup:** create a free key at [Google AI Studio](https://aistudio.google.com/apikey) and set `GEMINI_API_KEY` in `.env` locally, or as a Sensitive environment variable in the Vercel project. Never put it in the frontend or a `VITE_` variable: Vite embeds those in the public JavaScript bundle. Don't enable billing; without it the key stays on the free tier.
 - **Free-tier limits change**, so check [pricing](https://ai.google.dev/gemini-api/docs/pricing) and [rate limits](https://ai.google.dev/gemini-api/docs/rate-limits) before relying on it. When the limit is hit, Gemini returns `429` and the app falls back.
 - **Never required:** with no key, a timeout (3 s connect, 6 s read), an error, or an empty or overlong reply, the API returns a predefined message. The booking is already committed before Gemini is called, and any failure while building the message falls back too, so the booking response is always `201`.
 - **Backend only:** the key is sent in the `x-goog-api-key` header and never reaches the browser.
@@ -179,34 +179,29 @@ Frontend: `cd frontend && npm run build` type-checks and builds.
 
 ## Deployment
 
-| Part     | Host                          | Config                         |
-| -------- | ----------------------------- | ------------------------------ |
-| Frontend | Vercel (static site)          | root directory `frontend`      |
-| Backend  | Render (Docker web service)   | `render.yaml`, `backend/Dockerfile` |
-| Database | Neon (serverless PostgreSQL)  | connection string in Render env |
+Everything runs in **one Vercel project** using [Vercel Services](https://vercel.com/docs/services) (`vercel.json`):
 
-Vercel can't host a long-running Spring Boot server, so the backend runs as a Docker container on Render.
+| Path           | Service    | How it's built                                          |
+| -------------- | ---------- | ------------------------------------------------------- |
+| `/api/*`, `/actuator/*` | `backend`  | `backend/Dockerfile` as a container (tests run during the build) |
+| everything else | `frontend` | Vite static build                                      |
+| database       | Neon       | added from the Vercel Marketplace                       |
+
+Frontend and API share one domain, so the frontend calls `/api` on the same origin: no `VITE_API_URL` and no CORS setup is needed.
 
 1. **Push to GitHub**: create an empty repository, then `git remote add origin https://github.com/<you>/coffee-chat.git` and `git push -u origin main`.
-2. **Neon**: create a project and database. Copy the **direct** (non-pooled) connection host, because Flyway uses session-level locks that a transaction pooler doesn't support.
-3. **Render**: New → Blueprint → select the repo. `render.yaml` creates `coffee-chat-api` (free plan, health check `/actuator/health`). Set:
-   - `SPRING_DATASOURCE_URL=jdbc:postgresql://<neon-host>/<db>?sslmode=require`
-   - `SPRING_DATASOURCE_USERNAME=<neon-user>`
-   - `SPRING_DATASOURCE_PASSWORD=<neon-password>`
-   - `CORS_ORIGINS=https://<your-app>.vercel.app`
-   - `GEMINI_API_KEY=<optional>`
-
-   On first start Flyway creates the tables. Check `https://<your-api>.onrender.com/actuator/health` returns `{"status":"UP"}`.
-4. **Vercel**: Add New → Project → import the repo, set **Root Directory** to `frontend` (Vite is detected), and add `VITE_API_URL=https://<your-api>.onrender.com`. Deploy.
-5. **CORS**: put the final Vercel URL in Render's `CORS_ORIGINS` (comma-separate several). Render redeploys when an env var changes.
-
-`VITE_API_URL` is baked in at build time, so changing it needs a Vercel redeploy. Production builds ship no source maps.
+2. **Import into Vercel**: Add New → Project → pick the repo, leave Root Directory as the repo root (Vercel reads `vercel.json`).
+3. **Database**: project → Storage → Create Database → Neon (free plan) → connect it to the project. Neon injects `PGHOST_UNPOOLED`, `PGDATABASE`, `PGUSER` and `PGPASSWORD`, which `application.properties` reads directly.
+4. **Environment variables** (project → Settings → Environment Variables):
+   - `PORT=8080` (container services receive traffic on `PORT`, default `80`)
+   - `GEMINI_API_KEY` as a **Sensitive** variable (optional)
+5. **Redeploy** so the new variables apply. Flyway creates the tables on the first backend start. Check `https://<project>.vercel.app/actuator/health` returns `{"status":"UP"}`.
 
 ### Redeploying
 
-Both Render and Vercel watch the GitHub repo: every push to `main` rebuilds and redeploys the backend (Render) and the frontend (Vercel) automatically. Pushes to other branches get Vercel preview URLs; add those to `CORS_ORIGINS` if previews should call the API. Flyway applies any new `V2__…` migration on the next backend start; never edit a migration that has already run.
+Vercel watches the GitHub repo: every push to `main` builds and deploys to production, and every other branch or pull request gets its own preview URL. A failing backend test fails the build, so broken code never replaces the running version. Flyway applies new `V2__...` migrations on the next backend start; never edit a migration that has already run.
 
-Render's free instance sleeps after about 15 minutes idle, so the first request can take up to a minute; the booking page says so while it waits. Neon keeps the data, so bookings survive restarts and redeploys.
+The backend scales to zero after about 5 minutes without traffic, so the first request after a quiet period waits for Spring Boot to start; the booking page shows a "waking up" message meanwhile. Data lives in Neon, so bookings survive redeploys.
 
 ## Known limitations and improvements
 
