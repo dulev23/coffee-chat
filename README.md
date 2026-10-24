@@ -213,4 +213,8 @@ The backend scales to zero after about 5 minutes without traffic, so the first r
 
 ## AI tools used
 
-_TODO: describe accurately which AI coding tools were used and for what._
+ChatGPT: Used for guidance on project architecture, deployment planning, Gemini API configuration, troubleshooting, and testing strategies.
+
+Claude Code: Used for AI-assisted coding, implementation, debugging, and project development where applicable.
+
+Google Gemini API: Integrated to generate AI-powered coffee chat booking confirmation messages, with a fallback confirmation when the API is unavailable.
